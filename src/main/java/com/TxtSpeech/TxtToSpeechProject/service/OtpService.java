@@ -19,6 +19,8 @@ public class OtpService {
     // 5 minutes expiry
     private static final long OTP_VALID_DURATION_MS = 5 * 60 * 1000L;
 
+    public record OtpResult(String otp, boolean emailSent) {}
+
     private static class OtpEntry {
         final String otp;
         final long expiresAt;
@@ -34,8 +36,10 @@ public class OtpService {
     }
 
     private final Map<String, OtpEntry> otpStorage = new ConcurrentHashMap<>();
+    // Cache verified emails for 15 minutes so multi-step or re-verification doesn't fail
+    private final Map<String, Long> verifiedEmails = new ConcurrentHashMap<>();
 
-    public String generateAndSendOtp(String email, String name) {
+    public OtpResult generateAndSendOtp(String email, String name) {
         String normalizedEmail = email.trim().toLowerCase();
 
         int code = 100000 + secureRandom.nextInt(900000);
@@ -46,13 +50,30 @@ public class OtpService {
 
         log.info("Generated OTP for {}: (Expires in 5 minutes)", normalizedEmail);
 
-        emailService.sendOtpEmail(normalizedEmail, otp, name);
+        boolean emailSent = false;
+        try {
+            emailSent = emailService.sendOtpEmail(normalizedEmail, otp, name);
+        } catch (Exception e) {
+            log.warn("Failed to deliver OTP email to {}: {}", normalizedEmail, e.getMessage());
+        }
 
-        return otp;
+        if (!emailSent) {
+            log.warn("[OTP NOTICE] Email delivery unavailable for {} (hosting restrictions or SMTP not configured). Active OTP code: {}", normalizedEmail, otp);
+        }
+
+        return new OtpResult(otp, emailSent);
     }
 
     public boolean verifyOtp(String email, String otp) {
         String normalizedEmail = email.trim().toLowerCase();
+
+        // If email was already verified recently, accept it
+        Long verifiedUntil = verifiedEmails.get(normalizedEmail);
+        if (verifiedUntil != null && System.currentTimeMillis() < verifiedUntil) {
+            log.info("Email {} was already verified previously within validity window", normalizedEmail);
+            return true;
+        }
+
         OtpEntry entry = otpStorage.get(normalizedEmail);
 
         if (entry == null) {
@@ -68,9 +89,22 @@ public class OtpService {
             throw new IllegalArgumentException("Invalid verification code. Please check and try again.");
         }
 
-        // OTP verified successfully, consume it
+        // OTP verified successfully, add to verified cache
         otpStorage.remove(normalizedEmail);
+        verifiedEmails.put(normalizedEmail, System.currentTimeMillis() + 15 * 60 * 1000L);
         log.info("OTP verified successfully for {}", normalizedEmail);
         return true;
+    }
+
+    public boolean isEmailVerified(String email) {
+        if (email == null) return false;
+        Long verifiedUntil = verifiedEmails.get(email.trim().toLowerCase());
+        return verifiedUntil != null && System.currentTimeMillis() < verifiedUntil;
+    }
+
+    public void clearVerifiedEmail(String email) {
+        if (email != null) {
+            verifiedEmails.remove(email.trim().toLowerCase());
+        }
     }
 }

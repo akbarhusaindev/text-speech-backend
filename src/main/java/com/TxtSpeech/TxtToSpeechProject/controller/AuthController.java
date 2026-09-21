@@ -24,9 +24,9 @@ public class AuthController {
 
     @PostMapping("/send-otp")
     @Operation(summary = "Send OTP email", description = "Generates and sends a 6-digit verification code to the specified email address")
-    public ResponseEntity<Map<String, String>> sendOtp(@Valid @RequestBody SendOtpRequest request) {
-        authService.sendOtp(request);
-        return ResponseEntity.ok(Map.of("message", "Verification code sent to " + request.getEmail()));
+    public ResponseEntity<Map<String, Object>> sendOtp(@Valid @RequestBody SendOtpRequest request) {
+        Map<String, Object> response = authService.sendOtp(request);
+        return ResponseEntity.ok(response);
     }
 
     @PostMapping("/verify-otp")

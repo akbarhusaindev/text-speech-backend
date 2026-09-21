@@ -20,14 +20,29 @@ public class AuthService {
     private final JwtUtil jwtUtil;
     private final OtpService otpService;
 
-    public void sendOtp(SendOtpRequest request) {
+    public java.util.Map<String, Object> sendOtp(SendOtpRequest request) {
         String normalizedEmail = request.getEmail().trim().toLowerCase();
 
         if (userRepository.existsByEmail(normalizedEmail)) {
             throw new IllegalArgumentException("An account with email " + normalizedEmail + " already exists. Please log in.");
         }
 
-        otpService.generateAndSendOtp(normalizedEmail, request.getName());
+        OtpService.OtpResult result = otpService.generateAndSendOtp(normalizedEmail, request.getName());
+
+        java.util.Map<String, Object> response = new java.util.HashMap<>();
+        response.put("email", normalizedEmail);
+        response.put("emailSent", result.emailSent());
+
+        if (result.emailSent()) {
+            response.put("message", "Verification code sent to " + request.getEmail());
+        } else {
+            response.put("message", "Verification code generated! (Hosting notice: Free tier restricts SMTP. Verification code provided below)");
+            response.put("fallback", true);
+        }
+        // Always provide OTP in response so that if email delivery fails, user can still complete signup
+        response.put("otp", result.otp());
+
+        return response;
     }
 
     public boolean verifyOtp(VerifyOtpRequest request) {
@@ -54,6 +69,7 @@ public class AuthService {
                 .build();
 
         User savedUser = userRepository.save(user);
+        otpService.clearVerifiedEmail(normalizedEmail);
         log.info("Registered new verified user: {} (ID: {})", savedUser.getEmail(), savedUser.getId());
 
         String token = jwtUtil.generateToken(savedUser.getEmail(), savedUser.getName(), savedUser.getId());
